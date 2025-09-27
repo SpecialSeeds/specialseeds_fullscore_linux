@@ -306,31 +306,54 @@ configure_cron_permissions() {
     echo -e "${GREEN}cron permissions configured${NC}"
 }
 
-# NEW CIS FUNCTION - enhanced pam configuration (cis 5.3)
+# RMOVED DEPRECATED PAM_TALLY2
 enhanced_pam_configuration() {
     echo -e "${BLUE}=== enhanced pam configuration (cis 5.3) ===${NC}"
     
     # install required pam modules
     echo "installing pam modules..."
-    apt-get install -y libpam-pwquality libpam-pwhistory libpam-modules
+    apt-get install -y libpam-pwquality libpam-pwhistory libpam-modules libpam-faillock
     
     # backup existing pam files
     cp /etc/pam.d/common-auth /etc/pam.d/common-auth.backup.cis 2>/dev/null || true
     cp /etc/pam.d/common-password /etc/pam.d/common-password.backup.cis 2>/dev/null || true
+    cp /etc/pam.d/common-account /etc/pam.d/common-account.backup.cis 2>/dev/null || true
     
-    # configure pam_faillock (cis 5.3.3.1)
-    echo "configuring pam_faillock..."
+    # configure pam_faillock centralized configuration (cis 5.3.3.1)
+    echo "configuring pam_faillock centralized settings..."
+    cat > /etc/security/faillock.conf << 'EOF'
+# faillock configuration for account lockout policy
+# deny = number of failed attempts before lockout
+deny = 5
+# unlock_time = time in seconds before automatic unlock (900 = 15 minutes)
+unlock_time = 900
+# audit = log failed attempts
+audit
+# silent = don't display lockout messages to user
+silent
+# local_users_only = only apply to local users
+local_users_only
+EOF
+
+    # configure pam_faillock in authentication (cis 5.3. 3.1)
+    echo "configuring pam_faillock authentication..."
     cat > /etc/pam.d/common-auth << 'EOF'
 #
 # /etc/pam.d/common-auth - authentication settings
 #
-auth    required                        pam_faillock.so preauth audit silent deny=5 unlock_time=900
-auth    [success=1 default=ignore]      pam_unix.so
-auth    [default=die]                   pam_faillock.so authfail audit deny=5 unlock_time=900
-auth    sufficient                      pam_faillock.so authsucc audit deny=5 unlock_time=900
+auth    required                        pam_faillock.so preauth
+auth    [success=1 default=ignore]      pam_unix.so try_first_pass
+auth    [default=die]                   pam_faillock.so authfail
+auth    sufficient                      pam_faillock.so authsucc
 auth    requisite                       pam_deny.so
 auth    required                        pam_permit.so
 EOF
+
+    # configure account checking FAILLOCK
+    echo "configuring pam_faillock account checking..."
+    if ! grep -q "pam_faillock.so" /etc/pam.d/common-account; then
+        sed -i '1i account required pam_faillock.so' /etc/pam.d/common-account
+    fi
 
     # configure pam_pwquality (cis 5.3.3.2)
     echo "configuring pam_pwquality..."
@@ -349,46 +372,39 @@ dictcheck = 1
 enforce_for_root
 gecoscheck = 1
 reject_username
-
 EOF
 
-    # configure pam_pwhistory for password history
-    if ! grep -q "pam_pwhistory" /etc/pam.d/common-password; then
-        sed -i '/pam_unix.so/i password requisite pam_pwhistory.so remember=5 use_authtok enforce_for_root' /etc/pam.d/common-password
-    fi
-    
-    # pam_faillock
-    if command -v pam_faillock >/dev/null 2>&1; then
-        cat > /etc/pam.d/common-auth << 'EOF'
-auth    required                        pam_faillock.so preauth audit silent deny=5 unlock_time=900
-auth    [success=1 default=ignore]      pam_unix.so try_first_pass
-auth    [default=die]                   pam_faillock.so authfail audit deny=5 unlock_time=900
-auth    sufficient                      pam_faillock.so authsucc audit deny=5 unlock_time=900
-auth    requisite                       pam_deny.so
-auth    required                        pam_permit.so
-EOF
-    fi
-EOF
-    # configure pam_pwhistory (cis 5.3.3.3)
-    echo "configuring pam_pwhistory..."    
+    # configure pam_pwhistory and pwquality in password settings (cis 5.3.3.3)
+    echo "configuring pam_pwhistory and password policies..."    
     cat > /etc/pam.d/common-password << 'EOF'
-
 #
 # /etc/pam.d/common-password - password-related modules
 #
 password    requisite                       pam_pwquality.so retry=3
 password    requisite                       pam_pwhistory.so remember=5 use_authtok enforce_for_root
-password    [success=1 default=ignore]      pam_unix.so obscure use_authtok try_first_pass sha512 remember=5
+password    [success=1 default=ignore]      pam_unix.so obscure use_authtok try_first_pass sha512
 password    requisite                       pam_deny.so
 password    required                        pam_permit.so
 EOF
+
+    # remove any old pam_tally2 configurations
+    echo "removing deprecated pam_tally2 configurations..."
+    sed -i '/pam_tally2/d' /etc/pam.d/common-auth 2>/dev/null || true
+    sed -i '/pam_tally2/d' /etc/pam.d/common-account 2>/dev/null || true
 
     # update pam profiles
     echo "updating pam profiles..."
     pam-auth-update --package --force faillock pwquality pwhistory unix 2>/dev/null || true
     
+    # verify faillock is working
+    echo "verifying faillock configuration..."
+    if command -v faillock >/dev/null 2>&1; then
+        echo "faillock utility available for managing account locks"
+    else
+        echo "warning: faillock utility not found, manual lock management may be required"
+    fi
+    
     echo -e "${GREEN}enhanced pam configuration complete${NC}"
-
 }
 
 # NEW CIS FUNCTION - configure aide file integrity (cis 6.1)
@@ -857,6 +873,14 @@ enhanced_firewall_configuration() {
     ufw allow out 80      # http
     ufw allow out 443     # https
     ufw allow out 123     # ntp
+
+    # incase it doesnt follow thru
+    ufw allow out http
+    ufw allow out https
+    ufw allow out ntp # Network Time Protocol
+    ufw allow out to any port 53 # DNS
+    ufw allow out to any port 853 # DNS over TLS
+    ufw logging on
     
     # allow ssh
     ufw allow 22/tcp comment 'ssh'
@@ -1167,7 +1191,6 @@ EOF
 #
 # /etc/pam.d/common-auth - authentication settings common to all services
 #
-auth    required        pam_tally2.so deny=5 onerr=fail unlock_time=1800
 auth    [success=1 default=ignore] pam_unix.so try_first_pass sha512
 auth    requisite       pam_deny.so
 auth    required        pam_permit.so
@@ -1176,11 +1199,6 @@ EOF
     for f in common-password common-auth; do
         sed -i 's/\s*nullok//g' "/etc/pam.d/$f"
     done
-
-    # account lockout
-    if ! grep -q "pam_tally2.so" /etc/pam.d/common-auth; then
-        echo "auth required pam_tally2.so deny=5 onerr=fail unlock_time=1800" >> /etc/pam.d/common-auth
-    fi
     
     echo -e "${GREEN}password stuff done${NC}"
 }
@@ -2010,7 +2028,6 @@ main() {
     enhanced_apparmor_config
     configure_cron_permissions
     enhanced_pam_configuration
-    configure_aide_integrity
     comprehensive_audit_config
     enhanced_system_maintenance
     enhanced_sudo_configuration
@@ -2031,6 +2048,7 @@ main() {
     configure_auditing  # note: this now just shows a message
     harden_kernel
     advanced_kernel_hardening
+    # configure_aide_integrity
     secure_network
     configure_fail2ban
     create_banners
@@ -2088,7 +2106,7 @@ NEW CIS ADDITIONS:
 - enhanced apparmor configuration (cis 1.3.1)
 - cron permissions secured (cis 2.4.1)
 - enhanced pam configuration (cis 5.3)
-- aide file integrity monitoring (cis 6.1)
+- NOT ADDED: aide file integrity monitoring (cis 6.1) 
 - comprehensive audit rules (cis 6.3.3)
 - enhanced system maintenance (cis 7.1, 7.2)
 - enhanced sudo configuration (cis 5.2)
