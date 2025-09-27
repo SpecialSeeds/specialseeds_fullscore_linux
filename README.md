@@ -91,6 +91,7 @@ WARNING: highly invasive — only run on a controlled vm/clone.
   * enforce_for_root
 - removes all "nullok" entries
 - cracklib fallback settings included
+- configures pam faillock (removes deprecated pam_tally2)
 
 
 (`-')  _  
@@ -289,4 +290,5 @@ WARNING: highly invasive — only run on a controlled vm/clone.
 (OO ).-/  
 / CREDITS
 © specialseeds 2025
+
 
