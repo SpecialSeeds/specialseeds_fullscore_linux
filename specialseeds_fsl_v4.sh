@@ -218,7 +218,6 @@ configure_filesystem_modules() {
     )
     
     for module in "${FILESYSTEM_MODULES[@]}"; do
-        echo "install $module /bin/true" >> /etc/modprobe.d/filesystem.conf
         echo "blacklist $module" >> /etc/modprobe.d/filesystem.conf
         rmmod "$module" 2>/dev/null || true
         echo "disabled module: $module"
@@ -241,7 +240,6 @@ configure_network_modules() {
     )
     
     for module in "${NETWORK_MODULES[@]}"; do
-        echo "install $module /bin/true" >> /etc/modprobe.d/network.conf
         echo "blacklist $module" >> /etc/modprobe.d/network.conf
         rmmod "$module" 2>/dev/null || true
         echo "disabled module: $module"
@@ -1570,7 +1568,6 @@ EOF
     
     # Blacklist USB storage modules in modprobe
     echo "blacklist usb-storage" >> /etc/modprobe.d/blacklist-usb.conf
-    echo "install usb-storage /bin/true" >> /etc/modprobe.d/blacklist-usb.conf
     
     echo -e "${GREEN}removable media restrictions applied${NC}"
 }
